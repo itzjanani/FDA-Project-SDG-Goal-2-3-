@@ -1,0 +1,519 @@
+---
+title: "Project_Prediciting_Anaemia"
+author: "VJV"
+date: "2024-11-14"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# Load necessary libraries
+library(ggplot2)
+library(dplyr)
+library(readr)
+library(ggcorrplot)
+# Read the dataset
+data <- read.csv("E:\\Vishnu College 3rd Year\\6th Sem\\Projects\\PA Proj\\Dataset\\HDHI Admission data.csv")
+# Display first 10 rows
+head(data, 10)
+```
+
+
+```{r}
+nrow(data)
+colnames(data)
+table(data$GENDER)
+table(data$RURAL)
+table(data$`TYPE OF ADMISSION-EMERGENCY/OPD`)
+table(data$OUTCOME)
+```
+
+
+```{r}
+data$HB <- as.numeric(data$HB)
+data$TLC <- as.numeric(data$TLC)
+data$PLATELETS <- as.numeric(data$PLATELETS)
+data$GLUCOSE <- as.numeric(data$GLUCOSE)
+data$UREA <- as.numeric(data$UREA)
+data$CREATININE <- as.numeric(data$CREATININE)
+data$BNP <- as.numeric(data$BNP)
+data$EF <- as.numeric(data$EF)
+```
+
+
+```{r}
+str(data)
+colSums(is.na(data))
+```
+
+
+```{r}
+# Remove rows where any column contains "EMPTY"
+ndata <- data %>%
+  filter_all(all_vars(. != "EMPTY"))
+
+# Remove rows with NA values using base R
+ndata <- na.omit(ndata)
+nrow(ndata)
+```
+
+
+```{r}
+# Plot the correlation heatmap
+numeric_columns <- sapply(ndata, is.numeric)
+correlation <- cor(ndata[, numeric_columns], use = "complete.obs")
+# Plot heatmap with adjustments for cleaner display
+ggcorrplot(correlation,
+           lab = TRUE,                      # Display correlation values
+           hc.order = TRUE,                  # Cluster similar variables
+           #type = "lower",                   # Display only the lower triangle
+           title = "Correlation Matrix",
+           show.legend = TRUE,               # Show legend
+           colors = c("blue", "white", "red"),
+           lab_size = 0.8,                     # Adjust text size for non-overlapping values
+           tl.cex = 5,                      # Adjust size of labels for clarity
+           digits = 2)                       # Limit to 2 decimal places
+```
+
+
+```{r}
+# Extract only the correlation of 'HB' with other variables
+anemia_correlation <- correlation["ANAEMIA", ]
+
+# Remove 'HB' from the result as it's self-correlation
+anemia_correlation <- anemia_correlation[-which(names(anemia_correlation) == "ANAEMIA")]
+
+sort(anemia_correlation, decreasing = TRUE)
+```
+
+
+```{r}
+# Filter the data to include only rows where ACS is positive
+anaemia_data <- ndata %>%
+  filter(ANAEMIA == 1)  # Adjust column name if necessary
+
+# Count the number of males and females with ACS
+gender_count <- anaemia_data %>%
+  count(GENDER)  # Adjust column name if necessary
+
+print(gender_count)
+
+# Categorize age groups
+df1 <- ndata %>%
+  mutate(Age_Group = case_when(
+    AGE >= 10 & AGE < 20 ~ "10-20",
+    AGE >= 20 & AGE < 30 ~ "20-30",
+    AGE >= 30 & AGE < 40 ~ "30-40",
+    AGE >= 40 & AGE < 50 ~ "40-50",
+    AGE >= 50 & AGE < 60 ~ "50-60",
+    AGE >= 60 ~ "60+",
+    TRUE ~ "Unknown"
+  ))
+
+# Count anemia cases by age group
+anemia_counts <- df1 %>%
+  group_by(Age_Group) %>%
+  summarise(Anemia_Count = sum(ANAEMIA == 1, na.rm = TRUE))  # Assuming 'ANAEMIA' is the column for anemia status
+
+# Display the counts
+anemia_counts
+```
+
+
+```{r}
+ndata <- ndata %>% rename(PRIOR_CMP = "PRIOR.CMP",RAISED_CARDIAC_ENZYMES="RAISED.CARDIAC.ENZYMES")
+```
+
+
+```{r}
+#Random Forest
+
+# Load necessary libraries
+library(dplyr)
+library(randomForest)
+library(caret)
+
+# Assuming your DataFrame is named 'ndata'
+df <- ndata
+
+# Encode categorical variables 'GENDER' and 'RURAL'
+df$GENDER <- as.factor(df$GENDER)
+df$RURAL <- as.factor(df$RURAL)
+#df$`TYPE OF ADMISSION-EMERGENCY/OPD` <- as.factor(df$`TYPE OF ADMISSION-EMERGENCY/OPD`)
+df$OUTCOME <- as.factor(df$OUTCOME)
+
+# Define features and target
+X <- df %>% select(AGE, GENDER, TLC, PLATELETS, GLUCOSE, UREA, CREATININE)
+diseases <- 'ANAEMIA'
+y <- df[[diseases]]
+
+# Convert target variable to factor
+y <- as.factor(y)
+
+# Combine features and target for splitting
+data_combined <- cbind(X, ANAEMIA = y)
+
+# Split the data into training and testing sets
+set.seed(42)
+trainIndex <- createDataPartition(data_combined$ANAEMIA, p = 0.8, list = FALSE)
+trainData <- data_combined[trainIndex, ]
+testData <- data_combined[-trainIndex, ]
+
+# Train a Random Forest model
+rf_model <- randomForest(ANAEMIA ~ ., data = trainData, importance = TRUE, ntree = 100)
+
+# Evaluate the model on the test set
+predictions <- predict(rf_model, testData)
+conf_matrix <- confusionMatrix(predictions, testData$ANAEMIA)
+print(conf_matrix)
+
+# Display feature importance
+importance(rf_model)
+varImpPlot(rf_model)
+
+# Display the predicted diseases for the first few samples
+predicted_diseases <- data.frame(Predicted = predictions, Actual = testData$ANAEMIA)
+print(head(predicted_diseases))
+
+# Compute accuracy, precision, recall, and F1 score
+accuracy <- conf_matrix$overall["Accuracy"]
+precision <- conf_matrix$byClass["Pos Pred Value"]  # Precision
+recall <- conf_matrix$byClass["Sensitivity"]        # Recall
+f1_score <- 2 * ((precision * recall) / (precision + recall)) # F1 Score
+
+# Display the evaluation metrics
+cat("Accuracy:", accuracy, "\n")
+cat("Precision:", precision, "\n")
+cat("Recall:", recall, "\n")
+cat("F1 Score:", f1_score, "\n")
+```
+
+
+```{r}
+# Example input with consistent factor levels
+new_data <- data.frame(
+  AGE = 58,
+  GENDER = factor("F", levels = levels(trainData$GENDER)),
+  HB = 8.4,
+  TLC = 12.5,
+  PLATELETS = 130,
+  GLUCOSE = 251,
+  UREA = 134,
+  CREATININE = 0.5
+)
+
+# Make a prediction for a single patient
+pred <- predict(rf_model, new_data)
+pred
+# Display the prediction
+output <- as.character(pred)
+output <- as.integer(output)
+
+cat("The predicted value is : ",output)
+
+```
+
+```{r}
+recommendation = read.csv("E:\\Vishnu College 4th Year\\7th Sem\\FDA\\Project\\Recommendation_habits_ANAEMIA.csv")
+Gen = as.character(new_data$GENDER)
+if(Gen=='F'){
+  Gen='Female'
+} else{
+  Gen='Male'
+}
+
+# Determine age category
+  age_category <- case_when(
+    new_data$AGE >= 10 & new_data$AGE < 20 ~ "10-20 years",
+    new_data$AGE >= 20 & new_data$AGE < 30 ~ "20-30 years",
+    new_data$AGE >= 30 & new_data$AGE < 40 ~ "30-40 years",
+    new_data$AGE >= 40 & new_data$AGE < 50 ~ "40-50 years",
+    new_data$AGE >= 50 & new_data$AGE < 60 ~ "50-60 years",
+    new_data$AGE >= 60 ~ "60+ years"
+)
+  
+# Check for prediction and match recommendations
+if (output == 1) {
+
+  # Get the recommendations based on age and gender
+  recommendations_for_patient <- recommendation %>%
+    filter(Age == age_category & Gender == Gen)
+
+  # Display the recommendations
+  print("Life Style: ")
+  print(recommendations_for_patient$Lifestyle)
+  print("Food Habit: ")
+  print(recommendations_for_patient$FoodHabit)
+  print("ALert: ")
+  print(recommendations_for_patient$Alert)
+} else{
+  print("ALL Good !")
+}
+```
+
+```{r}
+```
+
+
+```{r}
+#Logistic Model
+
+# Load necessary libraries
+library(dplyr)
+library(caret)
+
+# Assuming your DataFrame is named 'ndata'
+df <- ndata
+
+# Encode categorical variables 'GENDER' and 'RURAL'
+df$GENDER <- as.factor(df$GENDER)
+df$RURAL <- as.factor(df$RURAL)
+df$OUTCOME <- as.factor(df$OUTCOME)
+
+# Define features and target
+X <- df %>% select(AGE, GENDER, TLC, PLATELETS, GLUCOSE, UREA, CREATININE)
+diseases <- 'ANAEMIA'
+y <- df[[diseases]]
+
+# Convert target variable to factor
+y <- as.factor(y)
+
+# Combine features and target for splitting
+data_combined <- cbind(X, ANAEMIA = y)
+
+# Split the data into training and testing sets
+set.seed(42)
+trainIndex <- createDataPartition(data_combined$ANAEMIA, p = 0.8, list = FALSE)
+trainData <- data_combined[trainIndex, ]
+testData <- data_combined[-trainIndex, ]
+
+# Train a Logistic Regression model
+logistic_model <- glm(ANAEMIA ~ ., data = trainData, family = binomial)
+
+# Make predictions on the test set
+predictions <- predict(logistic_model, testData, type = "response")
+predicted_classes <- ifelse(predictions > 0.5, "1", "0")
+
+# Evaluate the model
+conf_matrix <- confusionMatrix(factor(predicted_classes, levels = levels(testData$ANAEMIA)), testData$ANAEMIA)
+print(conf_matrix)
+
+# Compute accuracy, precision, recall, and F1 score
+accuracy <- conf_matrix$overall["Accuracy"]
+precision <- conf_matrix$byClass["Pos Pred Value"]  # Precision
+recall <- conf_matrix$byClass["Sensitivity"]        # Recall
+f1_score <- 2 * ((precision * recall) / (precision + recall)) # F1 Score
+
+# Display the evaluation metrics
+cat("Accuracy:", accuracy, "\n")
+cat("Precision:", precision, "\n")
+cat("Recall:", recall, "\n")
+cat("F1 Score:", f1_score, "\n")
+```
+
+
+```{r}
+#Decision Tree model
+
+# Load necessary libraries
+#install.packages("rpart.plot")
+library(dplyr)
+library(caret)
+library(rpart)
+library(rpart.plot)
+
+# Assuming your DataFrame is named 'ndata'
+df <- ndata
+
+# Encode categorical variables 'GENDER' and 'RURAL'
+df$GENDER <- as.factor(df$GENDER)
+df$RURAL <- as.factor(df$RURAL)
+df$OUTCOME <- as.factor(df$OUTCOME)
+
+# Define features and target
+X <- df %>% select(AGE, GENDER, TLC, PLATELETS, GLUCOSE, UREA, CREATININE)
+diseases <- 'ANAEMIA'
+y <- df[[diseases]]
+
+# Convert target variable to factor
+y <- as.factor(y)
+
+# Combine features and target for splitting
+data_combined <- cbind(X, ANAEMIA = y)
+
+# Split the data into training and testing sets
+set.seed(42)
+trainIndex <- createDataPartition(data_combined$ANAEMIA, p = 0.8, list = FALSE)
+trainData <- data_combined[trainIndex, ]
+testData <- data_combined[-trainIndex, ]
+
+# Train a Decision Tree model
+tree_model <- rpart(ANAEMIA ~ ., data = trainData, method = "class")
+
+# Make predictions on the test set
+predictions <- predict(tree_model, testData, type = "class")
+
+# Evaluate the model
+conf_matrix <- confusionMatrix(predictions, testData$ANAEMIA)
+print(conf_matrix)
+
+# Plot the Decision Tree
+rpart.plot(tree_model)
+
+# Compute accuracy, precision, recall, and F1 score
+accuracy <- conf_matrix$overall["Accuracy"]
+precision <- conf_matrix$byClass["Pos Pred Value"]  # Precision
+recall <- conf_matrix$byClass["Sensitivity"]        # Recall
+f1_score <- 2 * ((precision * recall) / (precision + recall)) # F1 Score
+
+# Display the evaluation metrics
+cat("Accuracy:", accuracy, "\n")
+cat("Precision:", precision, "\n")
+cat("Recall:", recall, "\n")
+cat("F1 Score:", f1_score, "\n")
+```
+
+
+```{r}
+#Forecasting with this dataset
+
+df = ndata
+new=df %>% rename(month_year="month.year")
+
+library(dplyr)
+library(ggplot2)
+library(lubridate)
+
+# Convert month_year to Date
+new$month_year <- as.Date(paste0("01-", new$month_year), format = "%d-%b-%y")
+
+# Extract year
+new$Year <- year(new$month_year)
+
+# Categorize age groups
+new <- new %>%
+  mutate(Age_Group = case_when(
+    AGE >= 10 & AGE < 20 ~ "10-20",
+    AGE >= 20 & AGE < 30 ~ "20-30",
+    AGE >= 30 & AGE < 40 ~ "30-40",
+    AGE >= 40 & AGE < 50 ~ "40-50",
+    AGE >= 50 & AGE < 60 ~ "50-60",
+    AGE >= 60 ~ "60+",
+    TRUE ~ "Unknown"
+  ))
+
+# Filter data for 2017-2019
+new_filtered <- new %>%
+  filter(Year >= 2017 & Year <= 2019)
+
+# Summarize data
+summary_new <- new_filtered %>%
+  group_by(Year, GENDER, Age_Group) %>%
+  summarise(Count = sum(ANAEMIA == 1)) %>%
+  ungroup()
+
+summary_new
+
+# Plotting
+ggplot(summary_new, aes(x = Age_Group, y = Count, fill = GENDER)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  facet_wrap(~ Year) +
+  labs(title = "Anemia Prevalence by Gender and Age Interval (2017-2019)",
+       x = "Age Interval",
+       y = "Count of Anemia Cases",
+       fill = "Gender") +
+  theme_minimal()
+```
+
+
+```{r}
+# Linear Regression
+
+# Prepare Data for Forecasting
+annual_summary <- summary_new %>%
+  group_by(Year, GENDER) %>%
+  summarise(Total_Count = sum(Count)) %>%
+  ungroup()
+
+# Fit linear model for each gender
+models <- annual_summary %>%
+  group_by(GENDER) %>%
+  do(model = lm(Total_Count ~ Year, data = .))
+
+# Function to predict prevalence for a given year and gender
+predict_anemia <- function(year, gender) {
+  model <- models$model[models$GENDER == gender][[1]]
+  return(predict(model, newdata = data.frame(Year = year)))
+}
+
+# Example prediction for the year 2020
+predicted_male_2020 <- predict_anemia(2018, 'M')
+predicted_female_2020 <- predict_anemia(2030, 'F')
+
+cat("Predicted anemia prevalence in 2018 for Male:", predicted_male_2020, "\n")
+cat("Predicted anemia prevalence in 2030 for Female:", predicted_female_2020, "\n")
+
+# Fit linear model
+model <- lm(Total_Count ~ Year, data = annual_summary)
+
+# Get R-squared value
+r_squared <- summary(model)$r.squared
+cat("R-squared:", r_squared, "\n")
+
+# Calculate Mean Absolute Error (MAE)
+actual <- annual_summary$Total_Count
+predicted <- predict(model)
+mae <- mean(abs(actual - predicted))
+cat("Mean Absolute Error (MAE):", mae, "\n")
+
+errors1 <- model$residuals
+rmse <- sqrt(mean(errors1^2))
+print(rmse)
+mse <- mean(errors1^2)
+print(mse)
+```
+
+
+```{r}
+
+#Polynomial Regression
+
+
+# Fit a polynomial regression model (degree 2)
+poly_model <- lm(Total_Count ~ poly(Year, 2),annual_summary)
+
+# Get R-squared value
+r_squared_poly <- summary(poly_model)$r.squared
+cat("Polynomial Model R-squared:", r_squared_poly, "\n")
+
+# Calculate Mean Absolute Error (MAE)
+predicted_poly <- predict(poly_model)
+mae_poly <- mean(abs(annual_summary$Total_Count - predicted_poly))
+cat("Polynomial Model Mean Absolute Error (MAE):", mae_poly, "\n")
+
+# Assuming 'poly_model' is the trained polynomial regression model
+# Create a data frame with the future years you want to predict
+future_years <- data.frame(Year = c(2020, 2021, 2022))
+
+# Use the model to predict anemia prevalence for future years
+future_predictions <- predict(poly_model, newdata = future_years)
+
+# Combine the predictions with the years for better visualization
+future_results <- data.frame(Year = future_years$Year, Predicted_Total_Count = future_predictions)
+
+# Display the results
+print(future_results)
+
+errors2 <- poly_model$residuals
+rmse <- sqrt(mean(errors2^2))
+print(rmse)
+mse <- mean(errors2^2)
+print(mse)
+```
+
+```{r}
+```
+

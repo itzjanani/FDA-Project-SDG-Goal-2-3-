@@ -1,0 +1,453 @@
+---
+title: "Project_forecasting_anaemia"
+author: "VJV"
+date: "2024-11-14"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+#install.packages("forecast")
+#install.packages("Metrics")
+```
+
+
+```{r}
+# Load necessary libraries
+library(dplyr)
+library(tidyr)
+library(forecast)
+library(ggplot2)
+
+# Step 1: Data Preparation
+# Read the data
+data <- read.csv("E:\\Vishnu College 4th Year\\7th Sem\\FDA\\Project\\Anaemia_pregnent_women.csv")
+
+# Remove rows with null or empty values
+data_clean <- data %>%
+  drop_na() # Remove rows with NA values
+
+# Verify that there are no empty strings as well (in case of "" values)
+data_clean <- data_clean %>%
+  filter_all(all_vars(. != ""))
+
+# Check column names to ensure proper format
+print(names(data_clean))  # Debug step to check the column names
+```
+```{r}
+# Modify the data preparation step to match "X2000", "X2001" format
+data_long <- data_clean %>%
+  pivot_longer(
+    cols = matches("^X\\d{4}$"), # Matches column names that are prefixed with 'X' followed by 4-digit years
+    names_to = "Year",
+    values_to = "Anemia_Prevalence"
+  ) %>%
+  mutate(Year = as.numeric(sub("X", "", Year))) # Remove 'X' prefix to convert to numeric year
+
+# Function to train model and forecast
+forecast_anemia <- function(country, future_year) {
+  country_data <- data_long %>% filter(Country_name == country)
+
+  # Convert to time series
+  ts_data <- ts(country_data$Anemia_Prevalence, start = min(country_data$Year), frequency = 1)
+
+  # Step 4: Fit ARIMA model
+  model <- auto.arima(ts_data)
+
+  # Forecast for the future year
+  years_to_forecast <- future_year - max(country_data$Year)
+  forecast_result <- forecast(model, h = years_to_forecast)
+
+  # Get the forecast for the specified future year
+  predicted_value <- forecast_result$mean[years_to_forecast]
+
+  return(predicted_value)
+}
+
+# Example usage
+country <- "Canada"
+future_year <- 2030
+predicted_anemia <- forecast_anemia(country, future_year)
+print(paste("Predicted Anemia Prevalence in", country, "for", future_year, "(Pregnant women):", round(predicted_anemia, 2), "%"))
+
+```
+
+
+```{r}
+# Load necessary libraries
+library(dplyr)
+library(tidyr)
+library(forecast)
+library(caret)    # For R-squared
+library(Metrics)  # For MAE and MSE
+
+# Step 5: Evaluate the model
+evaluate_model <- function(country) {
+  country_data <- data_long %>% filter(Country_name == country)
+
+  # Convert to time series and split into training and test
+  ts_data <- ts(country_data$Anemia_Prevalence, start = min(country_data$Year), frequency = 1)
+  #train_data <- window(ts_data, end = c(max(country_data$Year) - 3))
+  #test_data <- window(ts_data, start = c(max(country_data$Year) - 2))
+
+  # 70-30 train-test split
+  train_size <- floor(0.7 * length(ts_data))
+  train_data <- window(ts_data, end = time(ts_data)[train_size])
+  test_data <- window(ts_data, start = time(ts_data)[train_size + 1])
+
+  # Fit ARIMA model
+  model <- auto.arima(train_data)
+
+  # Forecast and compare
+  forecast_result <- forecast(model, h = length(test_data))
+
+  # Evaluation using built-in functions
+  mae <- mae(test_data, forecast_result$mean)
+  mse <- mse(test_data, forecast_result$mean)
+  r2 <- R2(forecast_result$mean, test_data)
+  rmse <- sqrt(mean((test_data - forecast_result$mean)^2))
+
+  # Print the results
+  print(paste("Evaluation Metrics for", country, ":"))
+  print(paste("R-squared:", round(r2, 3)))
+  print(paste("MAE:", round(mae, 2)))
+  print(paste("MSE:", round(mse, 2)))
+  print(paste("RMSE:", round(rmse, 2)))
+
+  # Visualization: Plot the historical and forecasted data
+  forecast_plot <- autoplot(forecast_result) +
+    autolayer(ts_data, series = "Historical Data") +
+    ggtitle(paste("Anemia Prevalence Forecast for", country)) +
+    xlab("Year") +
+    ylab("Anemia Prevalence (%)") +
+    theme_minimal()
+
+  print(forecast_plot)
+
+  return(list(R_squared = r2, MAE = mae, MSE = mse, RMSE = rmse))
+}
+
+evaluate_model(country)
+```
+
+
+```{r}
+# Load necessary libraries
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(Metrics)  # For RMSE, MAE, MSE
+
+# Step 1: Data Preparation
+# Read the data
+data <- read.csv("E:\\Vishnu College 4th Year\\7th Sem\\FDA\\Project\\Anaemia_pregnent_women.csv")
+
+# Remove rows with null or empty values
+data_clean <- data %>% drop_na()
+
+# Verify that there are no empty strings as well (in case of "" values)
+data_clean <- data_clean %>% filter_all(all_vars(. != ""))
+
+# Reshape the data to long format for analysis
+data_long <- data_clean %>% pivot_longer(
+  cols = matches("^X\\d{4}$"),  # Matches columns prefixed with 'X' and 4 digits
+  names_to = "Year",
+  values_to = "Anemia_Prevalence"
+) %>% mutate(Year = as.numeric(sub("X", "", Year)))  # Remove 'X' prefix to convert to numeric
+
+# Step 2: Linear and Polynomial Regression Models for Forecasting
+
+evaluate_regression_metrics <- function(country, degree = 1, future_year = NULL) {
+  country_data <- data_long %>% filter(Country_name == country)
+
+  # Prepare the data (select Year and Anemia Prevalence)
+  country_data <- country_data %>% select(Year, Anemia_Prevalence)
+
+  # Train-test split (70-30)
+  train_size <- floor(0.7 * nrow(country_data))
+  train_data <- country_data[1:train_size, ]
+  test_data <- country_data[(train_size + 1):nrow(country_data), ]
+
+  # Fit the model based on degree (linear or polynomial)
+  if (degree == 1) {
+    # Linear Regression model
+    model <- lm(Anemia_Prevalence ~ Year, data = train_data)
+  } else {
+    # Polynomial Regression model
+    model <- lm(Anemia_Prevalence ~ poly(Year, degree), data = train_data)
+  }
+
+  # Forecast (predict) using the model
+  forecast_result <- predict(model, newdata = test_data)
+
+  # Calculate RMSE, MAE, MSE, and R-squared
+  rmse <- sqrt(mean((test_data$Anemia_Prevalence - forecast_result)^2))
+  mae <- mean(abs(test_data$Anemia_Prevalence - forecast_result))
+  mse <- mean((test_data$Anemia_Prevalence - forecast_result)^2)
+  r2 <- 1 - sum((test_data$Anemia_Prevalence - forecast_result)^2) / sum((test_data$Anemia_Prevalence - mean(test_data$Anemia_Prevalence))^2)
+
+  # Plot the results
+  ggplot() +
+    geom_line(data = train_data, aes(x = Year, y = Anemia_Prevalence), color = "blue", linetype = "solid") +
+    geom_line(data = test_data, aes(x = Year, y = Anemia_Prevalence), color = "red", linetype = "dashed") +
+    geom_line(data = test_data, aes(x = Year, y = forecast_result), color = "green") +
+    labs(title = paste("Forecasting Anemia Prevalence for", country),
+         subtitle = paste("Degree:", degree, "- RMSE:", round(rmse, 2),
+                          "- MAE:", round(mae, 2), "- MSE:", round(mse, 2), "- R2:", round(r2, 3)),
+         x = "Year", y = "Anemia Prevalence (%)") +
+    theme_minimal() +
+    scale_color_manual(values = c("blue", "red", "green"), labels = c("Training Data", "Actual Data", "Forecast"))
+
+  # Print metrics
+  print(paste("Evaluation Metrics for", country, "using degree", degree, ":"))
+  print(paste("RMSE:", round(rmse, 2)))
+  print(paste("MAE:", round(mae, 2)))
+  print(paste("MSE:", round(mse, 2)))
+  print(paste("R-squared:", round(r2, 3)))
+
+  # Predict for a future year if provided
+  if (!is.null(future_year)) {
+    future_data <- data.frame(Year = future_year)
+
+    # Get prediction for the future year
+    future_prediction <- predict(model, newdata = future_data)
+
+    print(paste("Predicted Anemia Prevalence for", country, "in", future_year, ":", round(future_prediction, 2), "%"))
+
+    return(list(RMSE = rmse, MAE = mae, MSE = mse, R2 = r2, Forecast = future_prediction))
+  } else {
+    return(list(RMSE = rmse, MAE = mae, MSE = mse, R2 = r2))
+  }
+}
+
+# Example usage
+country <- "Canada"
+future_year <- 2025
+
+# For Linear Regression (degree = 1)
+metrics_linear <- evaluate_regression_metrics(country, degree = 1, future_year = future_year)
+
+# For Polynomial Regression (e.g., degree = 2)
+metrics_polynomial <- evaluate_regression_metrics(country, degree = 2, future_year = future_year)
+
+```
+
+
+```{r}
+#NON Pregnant Women
+```
+
+```{r}
+# Load necessary libraries
+library(dplyr)
+library(tidyr)
+library(forecast)
+library(ggplot2)
+
+# Step 1: Data Preparation
+# Read the data
+data <- read.csv("E:\\Vishnu College 4th Year\\7th Sem\\FDA\\Project\\Anaemia_non_pregnent_women.csv")
+
+# Remove rows with null or empty values
+data_clean <- data %>%
+  drop_na() # Remove rows with NA values
+
+# Verify that there are no empty strings as well (in case of "" values)
+data_clean <- data_clean %>%
+  filter_all(all_vars(. != ""))
+
+# Modify the data preparation step to match "X2000", "X2001" format
+data_long <- data_clean %>%
+  pivot_longer(
+    cols = matches("^X\\d{4}$"), # Matches column names that are prefixed with 'X' followed by 4-digit years
+    names_to = "Year",
+    values_to = "Anemia_Prevalence"
+  ) %>%
+  mutate(Year = as.numeric(sub("X", "", Year))) # Remove 'X' prefix to convert to numeric year
+
+# Function to train model and forecast
+forecast_anemia <- function(country, future_year) {
+  country_data <- data_long %>% filter(Country_name == country)
+
+  # Convert to time series
+  ts_data <- ts(country_data$Anemia_Prevalence, start = min(country_data$Year), frequency = 1)
+
+  # Step 4: Fit ARIMA model
+  model <- auto.arima(ts_data)
+
+  # Forecast for the future year
+  years_to_forecast <- future_year - max(country_data$Year)
+  forecast_result <- forecast(model, h = years_to_forecast)
+
+  # Get the forecast for the specified future year
+  predicted_value <- forecast_result$mean[years_to_forecast]
+
+  return(predicted_value)
+}
+
+# Example usage
+country <- "Canada"
+future_year <- 2030
+predicted_anemia <- forecast_anemia(country, future_year)
+print(paste("Predicted Anemia Prevalence in", country, "for", future_year, " (Non Pregnant women) :", round(predicted_anemia, 2), "%"))
+
+# Load necessary libraries
+library(dplyr)
+library(tidyr)
+library(forecast)
+library(caret)    # For R-squared
+library(Metrics)  # For MAE and MSE
+
+# Step 5: Evaluate the model
+evaluate_model <- function(country) {
+  country_data <- data_long %>% filter(Country_name == country)
+
+  # Convert to time series and split into training and test
+  ts_data <- ts(country_data$Anemia_Prevalence, start = min(country_data$Year), frequency = 1)
+  #train_data <- window(ts_data, end = c(max(country_data$Year) - 3))
+  #test_data <- window(ts_data, start = c(max(country_data$Year) - 2))
+
+  # 70-30 train-test split
+  train_size <- floor(0.7 * length(ts_data))
+  train_data <- window(ts_data, end = time(ts_data)[train_size])
+  test_data <- window(ts_data, start = time(ts_data)[train_size + 1])
+
+  # Fit ARIMA model
+  model <- auto.arima(train_data)
+
+  # Forecast and compare
+  forecast_result1 <- forecast(model, h = length(test_data))
+
+  # Evaluation using built-in functions
+  mae <- mae(test_data, forecast_result1$mean)
+  mse <- mse(test_data, forecast_result1$mean)
+  r2 <- R2(forecast_result1$mean, test_data)
+  rmse <- sqrt(mean((test_data - forecast_result1$mean)^2))
+
+  # Print the results
+  print(paste("Evaluation Metrics for", country, ":"))
+  print(paste("R-squared:", round(r2, 3)))
+  print(paste("MAE:", round(mae, 2)))
+  print(paste("MSE:", round(mse, 2)))
+  print(paste("RMSE:", round(rmse, 2)))
+
+  # Visualization: Plot the historical and forecasted data
+  forecast_plot <- autoplot(forecast_result1) +
+    autolayer(ts_data, series = "Historical Data") +
+    ggtitle(paste("Anemia Prevalence Forecast for", country)) +
+    xlab("Year") +
+    ylab("Anemia Prevalence (%)") +
+    theme_minimal()
+
+  print(forecast_plot)
+
+  return(list(R_squared = r2, MAE = mae, MSE = mse, RMSE =rmse))
+}
+
+evaluate_model(country)
+```
+
+```{r}
+# Load necessary libraries
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(Metrics)  # For RMSE, MAE, MSE
+
+# Step 1: Data Preparation
+# Read the data
+data <- read.csv("E:\\Vishnu College 4th Year\\7th Sem\\FDA\\Project\\Anaemia_non_pregnent_women.csv")
+
+# Remove rows with null or empty values
+data_clean <- data %>% drop_na()
+
+# Verify that there are no empty strings as well (in case of "" values)
+data_clean <- data_clean %>% filter_all(all_vars(. != ""))
+
+# Reshape the data to long format for analysis
+data_long <- data_clean %>% pivot_longer(
+  cols = matches("^X\\d{4}$"),  # Matches columns prefixed with 'X' and 4 digits
+  names_to = "Year",
+  values_to = "Anemia_Prevalence"
+) %>% mutate(Year = as.numeric(sub("X", "", Year)))  # Remove 'X' prefix to convert to numeric
+
+# Step 2: Linear and Polynomial Regression Models for Forecasting
+
+evaluate_regression_metrics <- function(country, degree = 1, future_year = NULL) {
+  country_data <- data_long %>% filter(Country_name == country)
+
+  # Prepare the data (select Year and Anemia Prevalence)
+  country_data <- country_data %>% select(Year, Anemia_Prevalence)
+
+  # Train-test split (70-30)
+  train_size <- floor(0.7 * nrow(country_data))
+  train_data <- country_data[1:train_size, ]
+  test_data <- country_data[(train_size + 1):nrow(country_data), ]
+
+  # Fit the model based on degree (linear or polynomial)
+  if (degree == 1) {
+    # Linear Regression model
+    model <- lm(Anemia_Prevalence ~ Year, data = train_data)
+  } else {
+    # Polynomial Regression model
+    model <- lm(Anemia_Prevalence ~ poly(Year, degree), data = train_data)
+  }
+
+  # Forecast (predict) using the model
+  forecast_result <- predict(model, newdata = test_data)
+
+  # Calculate RMSE, MAE, MSE, and R-squared
+  rmse <- sqrt(mean((test_data$Anemia_Prevalence - forecast_result)^2))
+  mae <- mean(abs(test_data$Anemia_Prevalence - forecast_result))
+  mse <- mean((test_data$Anemia_Prevalence - forecast_result)^2)
+  r2 <- 1 - sum((test_data$Anemia_Prevalence - forecast_result)^2) / sum((test_data$Anemia_Prevalence - mean(test_data$Anemia_Prevalence))^2)
+
+  # Plot the results
+  ggplot() +
+    geom_line(data = train_data, aes(x = Year, y = Anemia_Prevalence), color = "blue", linetype = "solid") +
+    geom_line(data = test_data, aes(x = Year, y = Anemia_Prevalence), color = "red", linetype = "dashed") +
+    geom_line(data = test_data, aes(x = Year, y = forecast_result), color = "green") +
+    labs(title = paste("Forecasting Anemia Prevalence for", country),
+         subtitle = paste("Degree:", degree, "- RMSE:", round(rmse, 2),
+                          "- MAE:", round(mae, 2), "- MSE:", round(mse, 2), "- R2:", round(r2, 3)),
+         x = "Year", y = "Anemia Prevalence (%)") +
+    theme_minimal() +
+    scale_color_manual(values = c("blue", "red", "green"), labels = c("Training Data", "Actual Data", "Forecast"))
+
+  # Print metrics
+  print(paste("Evaluation Metrics for", country, "using degree", degree, ":"))
+  print(paste("RMSE:", round(rmse, 2)))
+  print(paste("MAE:", round(mae, 2)))
+  print(paste("MSE:", round(mse, 2)))
+  print(paste("R-squared:", round(r2, 3)))
+
+  # Predict for a future year if provided
+  if (!is.null(future_year)) {
+    future_data <- data.frame(Year = future_year)
+
+    # Get prediction for the future year
+    future_prediction <- predict(model, newdata = future_data)
+
+    print(paste("Predicted Anemia Prevalence for", country, "in", future_year, ":", round(future_prediction, 2), "%"))
+
+    return(list(RMSE = rmse, MAE = mae, MSE = mse, R2 = r2, Forecast = future_prediction))
+  } else {
+    return(list(RMSE = rmse, MAE = mae, MSE = mse, R2 = r2))
+  }
+}
+
+# Example usage
+country <- "Afghanistan"
+future_year <- 2025
+
+# For Linear Regression (degree = 1)
+metrics_linear <- evaluate_regression_metrics(country, degree = 1, future_year = future_year)
+
+# For Polynomial Regression (e.g., degree = 2)
+metrics_polynomial <- evaluate_regression_metrics(country, degree = 2, future_year = future_year)
+
+```
+
